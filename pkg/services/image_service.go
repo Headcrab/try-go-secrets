@@ -57,10 +57,7 @@ func NewImageService(opts ImageServiceOptions) *ImageService {
 	if model == "" {
 		model = "gpt-image-1"
 	}
-	size := strings.TrimSpace(opts.Size)
-	if size == "" {
-		size = "1024x1792"
-	}
+	size := normalizeImageSize(opts.Size)
 	timeout := opts.Timeout
 	if timeout <= 0 {
 		timeout = 45 * time.Second
@@ -87,6 +84,22 @@ func NewImageService(opts ImageServiceOptions) *ImageService {
 		retryBackoff: retryBackoff,
 		strictMode:   opts.StrictMode,
 		client:       client,
+	}
+}
+
+func normalizeImageSize(raw string) string {
+	size := strings.TrimSpace(strings.ToLower(raw))
+	if size == "" {
+		return "1024x1536"
+	}
+	switch size {
+	case "1024x1792":
+		// Legacy vertical value from early prototype; keep compatibility.
+		return "1024x1536"
+	case "1792x1024":
+		return "1536x1024"
+	default:
+		return size
 	}
 }
 

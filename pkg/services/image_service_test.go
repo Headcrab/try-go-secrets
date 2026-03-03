@@ -47,3 +47,22 @@ func TestImageServiceGenerate_StrictWithoutKeyFails(t *testing.T) {
 		t.Fatalf("expected strict mode error without key")
 	}
 }
+
+func TestNormalizeImageSize(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{in: "", want: "1024x1536"},
+		{in: "1024x1792", want: "1024x1536"},
+		{in: "1792x1024", want: "1536x1024"},
+		{in: "auto", want: "auto"},
+		{in: "1024x1024", want: "1024x1024"},
+	}
+	for _, tc := range cases {
+		got := normalizeImageSize(tc.in)
+		if got != tc.want {
+			t.Fatalf("normalizeImageSize(%q)=%q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
