@@ -27,6 +27,7 @@ type ScriptWriter struct {
 var (
 	directiveLinePattern  = regexp.MustCompile(`(?i)^\s*(сцена|кадр|камера|видео|музыка|звук|переход|анимац|действие|action|scene|camera|shot|music|sfx)\s*[:\-]`)
 	directiveWordPattern  = regexp.MustCompile(`(?i)(сцена|кадр|камера|видео|музыка|звук|переход|анимац|action|scene|camera|shot|music|sfx)`)
+	visualLeadPattern     = regexp.MustCompile(`(?i)^\s*(на фоне|появля(ется|ются)|показыва(ется|ются)|в кадре|крупный план|общий план|панорама|зум|приближение|отдаление|визуализац|заставка|титр(ы)?|заголовк(и)?|background|fade|cut to|camera)`)
 	dialogueLabelPattern  = regexp.MustCompile(`(?i)^\s*\[(ведущий|диктор|narrator|voice[\s-]?over|speaker)\]\s*:\s*`)
 	dialogueLabelPattern2 = regexp.MustCompile(`(?i)^\s*(ведущий|диктор|narrator|voice[\s-]?over|speaker)\s*:\s*`)
 	spacePattern          = regexp.MustCompile(`\s+`)
@@ -170,7 +171,16 @@ func (w *ScriptWriter) findExistingScript(content models.Content) (models.Script
 		if script.ContentSlug != content.Slug || len(script.Segments) == 0 {
 			continue
 		}
-		script.Segments, script.TotalDurationSec = w.sanitizeExistingSegments(script.Segments)
+		sanitizedSegments, sanitizedTotal := w.sanitizeExistingSegments(script.Segments)
+		sanitizedScript := script
+		sanitizedScript.Segments = sanitizedSegments
+		sanitizedScript.TotalDurationSec = sanitizedTotal
+		if segmentsChanged(script.Segments, sanitizedSegments) || script.TotalDurationSec != sanitizedTotal {
+			if writeErr := writeScriptJSON(path, sanitizedScript); writeErr != nil {
+				return models.Script{}, "", false, fmt.Errorf("rewrite sanitized cached script: %w", writeErr)
+			}
+		}
+		script = sanitizedScript
 		total := script.TotalDurationSec
 		if total <= 0 || total > float64(w.MaxDurationSec) {
 			continue
@@ -229,6 +239,9 @@ func sanitizeNarrationChunk(chunk string) string {
 	if strings.HasPrefix(strings.ToLower(text), "смена кадра") {
 		return ""
 	}
+	if visualLeadPattern.MatchString(text) {
+		return ""
+	}
 
 	if strings.HasPrefix(text, "[") && directiveWordPattern.MatchString(text) {
 		return ""
@@ -275,4 +288,27 @@ func (w *ScriptWriter) sanitizeExistingSegments(segments []models.ScriptSegment)
 		order++
 	}
 	return out, total
+}
+
+func segmentsChanged(oldSegments, newSegments []models.ScriptSegment) bool {
+	if len(oldSegments) != len(newSegments) {
+		return true
+	}
+	for i := range oldSegments {
+		if oldSegments[i].Text != newSegments[i].Text {
+			return true
+		}
+	}
+	return false
+}
+
+func writeScriptJSON(path string, script models.Script) error {
+	data, err := json.MarshalIndent(script, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode script json: %w", err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return fmt.Errorf("write script json: %w", err)
+	}
+	return nil
 }

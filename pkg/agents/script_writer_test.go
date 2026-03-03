@@ -74,7 +74,7 @@ func TestScriptWriterWriteReusesExistingScript(t *testing.T) {
 
 func TestScriptWriterWriteSanitizesDirectorCommandsFromGeneratedText(t *testing.T) {
 	scriptDir := t.TempDir()
-	gen := &fakeScriptGenerator{text: "[Видео начинается с анимации]\n[Ведущий:] Привет! Секрет в том, что map работает быстро.\nСмена кадра на график."}
+	gen := &fakeScriptGenerator{text: "[Видео начинается с анимации]\nНа фоне появляются заголовки.\n[Ведущий:] Привет! Секрет в том, что map работает быстро.\nСмена кадра на график.\nПоявляются визуализации коллизий."}
 	writer := NewScriptWriter(gen, 60, scriptDir)
 
 	content := models.Content{
@@ -93,6 +93,9 @@ func TestScriptWriterWriteSanitizesDirectorCommandsFromGeneratedText(t *testing.
 	if strings.Contains(joined, "видео начинается") || strings.Contains(joined, "смена кадра") {
 		t.Fatalf("director commands should be removed from narration: %q", joined)
 	}
+	if strings.Contains(joined, "на фоне появляются") || strings.Contains(joined, "появляются визуализации") {
+		t.Fatalf("visual control phrases should be removed from narration: %q", joined)
+	}
 	if !strings.Contains(joined, "привет") {
 		t.Fatalf("expected spoken phrase to stay in narration: %q", joined)
 	}
@@ -110,8 +113,9 @@ func TestScriptWriterWriteSanitizesCachedScriptSegments(t *testing.T) {
 		CreatedAt:        time.Now().UTC(),
 		Segments: []models.ScriptSegment{
 			{Order: 1, Text: "[Видео начинается с заставки.", DurationSec: 6},
-			{Order: 2, Text: "] [Ведущий:] Важный момент про map.", DurationSec: 6},
-			{Order: 3, Text: "[Смена кадра на диаграмму.", DurationSec: 6},
+			{Order: 2, Text: "На фоне появляются заголовки.", DurationSec: 6},
+			{Order: 3, Text: "] [Ведущий:] Важный момент про map.", DurationSec: 6},
+			{Order: 4, Text: "[Смена кадра на диаграмму.", DurationSec: 6},
 		},
 	}
 	data, err := json.Marshal(existing)
@@ -136,8 +140,18 @@ func TestScriptWriterWriteSanitizesCachedScriptSegments(t *testing.T) {
 	if len(gotScript.Segments) != 1 {
 		t.Fatalf("expected only spoken segment to remain, got %d", len(gotScript.Segments))
 	}
-	if strings.Contains(strings.ToLower(gotScript.Segments[0].Text), "смена кадра") {
+	segmentText := strings.ToLower(gotScript.Segments[0].Text)
+	if strings.Contains(segmentText, "смена кадра") || strings.Contains(segmentText, "на фоне появляются") {
 		t.Fatalf("cached directives should be removed: %+v", gotScript.Segments[0])
+	}
+
+	rewrittenData, err := os.ReadFile(existingPath)
+	if err != nil {
+		t.Fatalf("read rewritten cached script: %v", err)
+	}
+	rewritten := strings.ToLower(string(rewrittenData))
+	if strings.Contains(rewritten, "на фоне появляются") {
+		t.Fatalf("cached script json should be rewritten without directives: %s", rewritten)
 	}
 }
 
