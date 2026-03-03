@@ -859,18 +859,21 @@ function buildSceneMotionFilter(scene, width, height) {
 
   switch (scene.motion) {
     case "pan-left":
-      return `${base},crop=${width}:${height}:x='(in_w-out_w)*(t/${durationExpr})':y='(in_h-out_h)/2'`;
+      return `${base},crop=${width}:${height}:x='(in_w-out_w)*(t/${durationExpr})':y='(in_h-out_h)/2':eval=frame`;
     case "pan-right":
-      return `${base},crop=${width}:${height}:x='(in_w-out_w)*(1-(t/${durationExpr}))':y='(in_h-out_h)/2'`;
+      return `${base},crop=${width}:${height}:x='(in_w-out_w)*(1-(t/${durationExpr}))':y='(in_h-out_h)/2':eval=frame`;
     case "tilt-up":
-      return `${base},crop=${width}:${height}:x='(in_w-out_w)/2':y='(in_h-out_h)*(1-(t/${durationExpr}))'`;
+      return `${base},crop=${width}:${height}:x='(in_w-out_w)/2':y='(in_h-out_h)*(1-(t/${durationExpr}))':eval=frame`;
     default:
-      return `${base},crop='in_w-(in_w*0.10*(t/${durationExpr}))':'in_h-(in_h*0.10*(t/${durationExpr}))':x='(in_w-out_w)/2':y='(in_h-out_h)/2',scale=${width}:${height}`;
+      return `${base},crop='in_w-(in_w*0.10*(t/${durationExpr}))':'in_h-(in_h*0.10*(t/${durationExpr}))':x='(in_w-out_w)/2':y='(in_h-out_h)/2':eval=frame,scale=${width}:${height}`;
   }
 }
 
-function buildSceneClipFilter(scene, data, captionFilePath, fontFile) {
-  const filters = [buildSceneMotionFilter(scene, data.width, data.height)];
+function buildSceneClipFilter(scene, data, captionFilePath, fontFile, staticMotion = false) {
+  const motionFilter = staticMotion
+    ? `scale=${Math.round(data.width * 1.18)}:${Math.round(data.height * 1.18)}:force_original_aspect_ratio=increase,crop=${data.width}:${data.height}:x='(in_w-out_w)/2':y='(in_h-out_h)/2'`
+    : buildSceneMotionFilter(scene, data.width, data.height);
+  const filters = [motionFilter];
   filters.push("eq=saturation=1.08:contrast=1.03");
   filters.push("fade=t=in:st=0:d=0.35");
   const fadeOutStart = Math.max(0, scene.durationSec - 0.35).toFixed(3);
@@ -893,9 +896,9 @@ function buildSceneClipFilter(scene, data, captionFilePath, fontFile) {
   return filters.join(",");
 }
 
-function buildSceneClipArgs(scene, data, clipPath, captionFilePath, fontFile) {
+function buildSceneClipArgs(scene, data, clipPath, captionFilePath, fontFile, staticMotion = false) {
   const duration = Math.max(1, Number(scene.durationSec) || 4);
-  const filter = buildSceneClipFilter(scene, data, captionFilePath, fontFile);
+  const filter = buildSceneClipFilter(scene, data, captionFilePath, fontFile, staticMotion);
   return [
     "-y",
     "-loop",
@@ -921,6 +924,17 @@ function buildSceneClipArgs(scene, data, clipPath, captionFilePath, fontFile) {
   ];
 }
 
+function isSceneMotionFailure(error) {
+  const stderr = String(error?.stderr || "");
+  const message = String(error?.message || "");
+  const payload = `${message}\n${stderr}`.toLowerCase();
+  return (
+    payload.includes("parsed_crop") ||
+    payload.includes("error when evaluating the expression") ||
+    payload.includes("failed to configure input pad on parsed_crop")
+  );
+}
+
 async function renderSceneVideoTrack(scenes, data, tempDir, requestId, fontFile) {
   const clipPaths = [];
   for (let i = 0; i < scenes.length; i += 1) {
@@ -934,9 +948,18 @@ async function renderSceneVideoTrack(scenes, data, tempDir, requestId, fontFile)
       // eslint-disable-next-line no-await-in-loop
       await fs.writeFile(captionPath, `${wrappedCaption}\n`, "utf8");
     }
-    const args = buildSceneClipArgs(scene, data, clipPath, captionPath, fontFile);
+    const args = buildSceneClipArgs(scene, data, clipPath, captionPath, fontFile, false);
     // eslint-disable-next-line no-await-in-loop
-    await runCommand("ffmpeg", args, { timeoutMs: 4 * 60 * 1000 });
+    try {
+      await runCommand("ffmpeg", args, { timeoutMs: 4 * 60 * 1000 });
+    } catch (error) {
+      if (!isSceneMotionFailure(error)) {
+        throw error;
+      }
+      const fallbackArgs = buildSceneClipArgs(scene, data, clipPath, captionPath, fontFile, true);
+      // eslint-disable-next-line no-await-in-loop
+      await runCommand("ffmpeg", fallbackArgs, { timeoutMs: 4 * 60 * 1000 });
+    }
     clipPaths.push(clipPath);
   }
 
