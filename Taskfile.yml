@@ -121,24 +121,24 @@ tasks:
     desc: Build Docker images
     deps: [setup]
     cmds:
-      - docker compose build
+      - bash -lc "docker compose --ansi never --progress plain build 2>&1 | tr -d '\r'"
 
   docker:build:app:
     desc: Build app Docker image
     deps: [setup]
     cmds:
-      - docker compose build app
+      - bash -lc "docker compose --ansi never --progress plain build app 2>&1 | tr -d '\r'"
 
   docker:up:
     desc: Start Puppeteer service in Docker
     deps: [setup]
     cmds:
-      - docker compose up -d puppeteer
+      - docker compose --ansi never up -d puppeteer
 
   docker:down:
     desc: Stop and remove compose services
     cmds:
-      - docker compose down
+      - docker compose --ansi never down
 
   run:docker:
     desc: Run pipeline in Docker (optional NUM=43)
@@ -147,14 +147,14 @@ tasks:
       - task: preflight
         vars:
           REQUIRE_RENDER: "true"
-      - docker compose run --rm app go run ./cmd{{if .NUM}} {{.NUM}}{{end}}
+      - docker compose --ansi never run --rm app go run ./cmd{{if .NUM}} {{.NUM}}{{end}}
 
   run:docker:no-render:
     desc: Run pipeline in Docker without Puppeteer (placeholder video)
     deps: [setup, docker:build:app]
     cmds:
       - task: preflight
-      - docker compose run --rm -e PUPPETEER_SERVICE_URL= app go run ./cmd{{if .NUM}} {{.NUM}}{{end}}
+      - docker compose --ansi never run --rm -e PUPPETEER_SERVICE_URL= app go run ./cmd{{if .NUM}} {{.NUM}}{{end}}
 
   run:prod:docker:
     desc: Run pipeline in Docker production mode with strict env checks (optional NUM=43)
@@ -164,7 +164,7 @@ tasks:
         vars:
           STRICT: "true"
           REQUIRE_RENDER: "true"
-      - docker compose run --rm -e APP_ENV=production -e STRICT_ENV=true app go run ./cmd{{if .NUM}} {{.NUM}}{{end}}
+      - docker compose --ansi never run --rm -e APP_ENV=production -e STRICT_ENV=true app go run ./cmd{{if .NUM}} {{.NUM}}{{end}}
 
   run:
     desc: Alias for run:docker (optional NUM=43)
@@ -206,7 +206,7 @@ tasks:
         vars:
           REQUIRE_RENDER: "true"
       - bash scripts/healthcheck.sh 'http://127.0.0.1:{{default "3000" .PUPPETEER_PORT}}/health' 20
-      - docker compose run --rm app go run ./cmd --help
+      - docker compose --ansi never run --rm app go run ./cmd --help
 
   smoke:prod:docker:
     desc: Production-mode Docker smoke check with strict env checks
@@ -217,7 +217,7 @@ tasks:
           STRICT: "true"
           REQUIRE_RENDER: "true"
       - bash scripts/healthcheck.sh 'http://127.0.0.1:{{default "3000" .PUPPETEER_PORT}}/health' 20
-      - docker compose run --rm -e APP_ENV=production -e STRICT_ENV=true app go run ./cmd --help
+      - docker compose --ansi never run --rm -e APP_ENV=production -e STRICT_ENV=true app go run ./cmd --help
 
   smoke:
     desc: Alias for smoke:docker
