@@ -51,7 +51,7 @@ func TestContentSelector_SelectRandomSkipsProcessed(t *testing.T) {
 	}
 }
 
-func TestContentSelector_SelectByNumberAlreadyProcessed(t *testing.T) {
+func TestContentSelector_SelectByNumberAllowsRebuildForProcessed(t *testing.T) {
 	rawDir := t.TempDir()
 	fileA := filepath.Join(rawDir, "topic__line-043.md")
 	writeFile(t, fileA, "# A\ncontent")
@@ -62,9 +62,12 @@ func TestContentSelector_SelectByNumberAlreadyProcessed(t *testing.T) {
 	selector := NewContentSelector(rawDir, processed, services.NewContentParser())
 
 	target := 43
-	_, err := selector.Select(context.Background(), &target)
-	if err == nil {
-		t.Fatalf("expected error for already processed content")
+	content, err := selector.Select(context.Background(), &target)
+	if err != nil {
+		t.Fatalf("Select returned error: %v", err)
+	}
+	if content.FilePath != fileA {
+		t.Fatalf("expected file %s, got %s", fileA, content.FilePath)
 	}
 }
 

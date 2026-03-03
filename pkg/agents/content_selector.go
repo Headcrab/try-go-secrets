@@ -85,9 +85,6 @@ func (s *ContentSelector) pickByNumber(files []string, target int) (string, erro
 		if !ok || number != target {
 			continue
 		}
-		if s.Processed != nil && s.Processed.IsProcessed(file) {
-			return "", fmt.Errorf("content %d already processed", target)
-		}
 		return file, nil
 	}
 	return "", fmt.Errorf("content with number %d not found", target)

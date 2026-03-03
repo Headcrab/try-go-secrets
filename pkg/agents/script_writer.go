@@ -57,7 +57,8 @@ func (w *ScriptWriter) Write(ctx context.Context, content models.Content) (model
 	if err := os.MkdirAll(w.ScriptOutputDir, 0o755); err != nil {
 		return models.Script{}, "", fmt.Errorf("create script output dir: %w", err)
 	}
-	fileName := fmt.Sprintf("%s-%s.json", script.CreatedAt.Format("2006-01-02"), content.Slug)
+	runID := script.CreatedAt.Format("2006-01-02-150405.000")
+	fileName := fmt.Sprintf("%s-%s.json", runID, content.Slug)
 	outputPath := filepath.Join(w.ScriptOutputDir, fileName)
 	data, err := json.MarshalIndent(script, "", "  ")
 	if err != nil {
