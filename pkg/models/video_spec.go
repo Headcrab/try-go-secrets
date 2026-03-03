@@ -9,12 +9,12 @@ type VideoSpec struct {
 
 type VideoScene struct {
 	Order       int     `json:"order"`
-	StartSec    float64 `json:"start_sec"`
-	DurationSec float64 `json:"duration_sec"`
+	StartSec    float64 `json:"startSec"`
+	DurationSec float64 `json:"durationSec"`
 	Caption     string  `json:"caption"`
 	Action      string  `json:"action"`
 	Motion      string  `json:"motion"`
-	ImagePath   string  `json:"image_path"`
+	ImagePath   string  `json:"imagePath"`
 	Prompt      string  `json:"prompt,omitempty"`
 }
 
