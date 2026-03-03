@@ -32,7 +32,7 @@ const (
 	defaultTTSFormat           = "lpcm"
 	defaultTTSLang             = "ru-RU"
 	defaultTTSSampleRateHertz  = 48000
-	defaultVideoTimeoutSec     = 60
+	defaultVideoTimeoutSec     = 300
 	defaultVideoMaxRetries     = 2
 	defaultVideoRetryBackoffMs = 1000
 	defaultImageBaseURL        = "https://api.openai.com/v1"
