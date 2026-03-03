@@ -120,6 +120,12 @@ tasks:
     cmds:
       - docker compose build
 
+  docker:build:app:
+    desc: Build app Docker image
+    deps: [setup]
+    cmds:
+      - docker compose build app
+
   docker:up:
     desc: Start Puppeteer service in Docker
     deps: [setup]
@@ -133,7 +139,7 @@ tasks:
 
   run:docker:
     desc: Run pipeline in Docker (optional NUM=43)
-    deps: [setup, docker:up]
+    deps: [setup, docker:up, docker:build:app]
     cmds:
       - task: preflight
         vars:
@@ -142,14 +148,14 @@ tasks:
 
   run:docker:no-render:
     desc: Run pipeline in Docker without Puppeteer (placeholder video)
-    deps: [setup]
+    deps: [setup, docker:build:app]
     cmds:
       - task: preflight
       - docker compose run --rm -e PUPPETEER_SERVICE_URL= app go run ./cmd{{if .NUM}} {{.NUM}}{{end}}
 
   run:prod:docker:
     desc: Run pipeline in Docker production mode with strict env checks (optional NUM=43)
-    deps: [setup, docker:up]
+    deps: [setup, docker:up, docker:build:app]
     cmds:
       - task: preflight
         vars:
