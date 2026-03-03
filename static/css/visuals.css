@@ -1,0 +1,71 @@
+:root {
+  --bg: #0b1020;
+  --panel: #121a2d;
+  --line: #2c3a58;
+  --text: #e6edf8;
+  --muted: #a2afc9;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  font-family: "Segoe UI", "Arial", sans-serif;
+  background: radial-gradient(circle at 20% 20%, #1a2742 0%, var(--bg) 65%);
+  color: var(--text);
+}
+
+.template-root {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 2rem;
+}
+
+.panel {
+  width: min(900px, 100%);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  padding: 2rem;
+}
+
+.title {
+  margin: 0;
+  font-size: 2rem;
+  letter-spacing: 0.02em;
+}
+
+.subtitle {
+  margin: 0.75rem 0 1.5rem;
+  color: var(--muted);
+}
+
+.mock-terminal {
+  margin: 0;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  padding: 1rem;
+  background: #0a1020;
+  color: #9ae6b4;
+}
+
+.mock-diagram {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.node {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.5rem 1rem;
+}
+
+.arrow {
+  color: var(--muted);
+}
