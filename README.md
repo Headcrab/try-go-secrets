@@ -10,6 +10,7 @@ This repository is bootstrapped for local/dev execution of a Go pipeline plus a 
 - `Taskfile.yml`: primary command entrypoint for setup, preflight validation, smoke checks, local run, and docker run.
 - `scripts/run.sh`: thin compatibility shim that delegates to Task tasks (no duplicated run logic).
 - `.env.example`: environment template for API/config values.
+- `output/images`: AI-generated scene frames for hero/action visuals.
 
 ## Volume mappings
 
@@ -57,6 +58,7 @@ Prerequisites:
 ## Production run flow
 
 1. Configure secrets in `.env` (replace placeholder values for `ZAI_API_KEY` and `YANDEX_API_KEY`).
+   - For action scenes in strict mode also set `IMAGE_API_KEY` (or `OPENAI_API_KEY`) and `IMAGE_MODEL` (for example `gpt-image-1`).
 2. Validate strict prerequisites:
    - `task preflight:strict:render`
 3. Run smoke check:

@@ -113,6 +113,13 @@ if [ "${strict_mode}" = "true" ]; then
       append_missing "${name} (placeholder value)"
     fi
   done
+
+  image_api_key="${IMAGE_API_KEY-}"
+  openai_api_key="${OPENAI_API_KEY-}"
+  zai_api_key="${ZAI_API_KEY-}"
+  if is_empty "${image_api_key}" && is_empty "${openai_api_key}" && is_empty "${zai_api_key}"; then
+    append_missing "IMAGE_API_KEY or OPENAI_API_KEY or ZAI_API_KEY"
+  fi
 fi
 
 if [ "${require_render}" = "true" ] && is_empty "${PUPPETEER_SERVICE_URL-}"; then

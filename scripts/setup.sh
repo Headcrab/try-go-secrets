@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-mkdir -p raw output/scripts output/audio output/videos output/logs state
+mkdir -p raw output/scripts output/audio output/images output/videos output/logs state
 
 if [ ! -f .env ] && [ -f .env.example ]; then
   cp .env.example .env
