@@ -20,6 +20,9 @@ const LIMITS = {
   maxBlocks: 40,
   maxBlockLength: 14000,
   maxAudioPaths: 64,
+  maxScenes: 64,
+  maxSceneCaptionLength: 320,
+  maxSceneActionLength: 220,
   maxPathLength: 4096,
   minWidth: 360,
   maxWidth: 2160,
@@ -150,6 +153,78 @@ function normalizeStringArray(value, fieldName, maxItems, maxItemLength, errors)
   return out;
 }
 
+function normalizeMotion(value) {
+  const motion = toTrimmedString(value).toLowerCase();
+  if (motion === "pan-left" || motion === "pan-right" || motion === "tilt-up") {
+    return motion;
+  }
+  return "push-in";
+}
+
+function normalizeScenes(value, errors) {
+  if (value == null) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    errors.push("scenes must be an array");
+    return [];
+  }
+  if (value.length > LIMITS.maxScenes) {
+    errors.push(`scenes exceeds ${LIMITS.maxScenes} items`);
+    return [];
+  }
+
+  const scenes = [];
+  for (let i = 0; i < value.length; i += 1) {
+    const raw = value[i];
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      errors.push(`scenes[${i}] must be an object`);
+      continue;
+    }
+
+    const imagePath = toTrimmedString(raw.imagePath);
+    if (!imagePath) {
+      errors.push(`scenes[${i}].imagePath is required`);
+      continue;
+    }
+    if (imagePath.length > LIMITS.maxPathLength) {
+      errors.push(`scenes[${i}].imagePath exceeds ${LIMITS.maxPathLength} characters`);
+      continue;
+    }
+
+    const caption = toTrimmedString(raw.caption);
+    if (caption.length > LIMITS.maxSceneCaptionLength) {
+      errors.push(`scenes[${i}].caption exceeds ${LIMITS.maxSceneCaptionLength} characters`);
+      continue;
+    }
+
+    const action = toTrimmedString(raw.action);
+    if (action.length > LIMITS.maxSceneActionLength) {
+      errors.push(`scenes[${i}].action exceeds ${LIMITS.maxSceneActionLength} characters`);
+      continue;
+    }
+
+    let durationSec = Number(raw.durationSec);
+    if (!Number.isFinite(durationSec) || durationSec <= 0) {
+      durationSec = 4;
+    }
+    if (durationSec > 30) {
+      errors.push(`scenes[${i}].durationSec must be <= 30`);
+      continue;
+    }
+
+    scenes.push({
+      order: Number.isInteger(raw.order) ? raw.order : i + 1,
+      caption,
+      action,
+      durationSec,
+      motion: normalizeMotion(raw.motion),
+      imagePath,
+    });
+  }
+  return scenes;
+}
+
 function normalizeRenderPayload(payload) {
   const errors = [];
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
@@ -208,6 +283,7 @@ function normalizeRenderPayload(payload) {
     LIMITS.maxPathLength,
     errors
   );
+  const scenes = normalizeScenes(payload.scenes, errors);
 
   const outputDir = payload.outputDir == null ? "" : toTrimmedString(payload.outputDir);
   if (payload.outputDir != null && !outputDir) {
@@ -238,6 +314,7 @@ function normalizeRenderPayload(payload) {
       codeBlocks,
       mermaidBlocks,
       audioPaths,
+      scenes,
       outputDir,
       outputFileName,
       audioMode: normalizedAudioMode,
@@ -407,6 +484,31 @@ async function normalizeAudioPaths(audioPaths) {
       throw validationError(`audioPaths[${i}] is not readable`, { path: resolved });
     }
     normalized.push(resolved);
+  }
+  return normalized;
+}
+
+async function normalizeSceneImagePaths(scenes) {
+  const normalized = [];
+  for (let i = 0; i < scenes.length; i += 1) {
+    const scene = scenes[i];
+    const resolved = path.resolve(scene.imagePath);
+    try {
+      await fs.access(resolved, constants.R_OK);
+      const stat = await fs.stat(resolved);
+      if (!stat.isFile()) {
+        throw validationError(`scenes[${i}].imagePath is not a regular file`, { path: resolved });
+      }
+    } catch (error) {
+      if (error.httpStatus) {
+        throw error;
+      }
+      throw validationError(`scenes[${i}].imagePath is not readable`, { path: resolved });
+    }
+    normalized.push({
+      ...scene,
+      imagePath: resolved,
+    });
   }
   return normalized;
 }
@@ -717,6 +819,207 @@ function buildFallbackFfmpegArgs(data, outputPath, audioPath, audioDuration) {
   return { args, sourceDuration };
 }
 
+function wrapCaption(text, maxLineLength = 42, maxLines = 3) {
+  const compact = String(text || "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!compact) {
+    return "";
+  }
+  const words = compact.split(" ");
+  const lines = [];
+  let current = "";
+  for (const word of words) {
+    if (current.length === 0) {
+      current = word;
+      continue;
+    }
+    if ((current + word).length + 1 <= maxLineLength) {
+      current += ` ${word}`;
+      continue;
+    }
+    lines.push(current);
+    current = word;
+    if (lines.length >= maxLines) {
+      break;
+    }
+  }
+  if (lines.length < maxLines && current) {
+    lines.push(current);
+  }
+  return lines.slice(0, maxLines).join("\n");
+}
+
+function buildSceneMotionFilter(scene, width, height) {
+  const duration = Math.max(1, Number(scene.durationSec) || 4);
+  const durationExpr = duration.toFixed(3);
+  const overscanWidth = Math.round(width * 1.25);
+  const overscanHeight = Math.round(height * 1.25);
+  const base = `scale=${overscanWidth}:${overscanHeight}:force_original_aspect_ratio=increase`;
+
+  switch (scene.motion) {
+    case "pan-left":
+      return `${base},crop=${width}:${height}:x='(in_w-out_w)*(t/${durationExpr})':y='(in_h-out_h)/2'`;
+    case "pan-right":
+      return `${base},crop=${width}:${height}:x='(in_w-out_w)*(1-(t/${durationExpr}))':y='(in_h-out_h)/2'`;
+    case "tilt-up":
+      return `${base},crop=${width}:${height}:x='(in_w-out_w)/2':y='(in_h-out_h)*(1-(t/${durationExpr}))'`;
+    default:
+      return `${base},crop='in_w-(in_w*0.10*(t/${durationExpr}))':'in_h-(in_h*0.10*(t/${durationExpr}))':x='(in_w-out_w)/2':y='(in_h-out_h)/2',scale=${width}:${height}`;
+  }
+}
+
+function buildSceneClipFilter(scene, data, captionFilePath, fontFile) {
+  const filters = [buildSceneMotionFilter(scene, data.width, data.height)];
+  filters.push("eq=saturation=1.08:contrast=1.03");
+  filters.push("fade=t=in:st=0:d=0.35");
+  const fadeOutStart = Math.max(0, scene.durationSec - 0.35).toFixed(3);
+  filters.push(`fade=t=out:st=${fadeOutStart}:d=0.35`);
+
+  if (captionFilePath) {
+    filters.push(
+      drawTextFilter(captionFilePath, {
+        fontFile,
+        fontColor: "0xF9FAFB",
+        fontSize: Math.max(34, Math.floor(data.width * 0.034)),
+        lineSpacing: 10,
+        x: "(w-text_w)/2",
+        y: "h-280",
+        boxColor: "0x000000@0.48",
+        boxBorder: 20,
+      })
+    );
+  }
+  return filters.join(",");
+}
+
+function buildSceneClipArgs(scene, data, clipPath, captionFilePath, fontFile) {
+  const duration = Math.max(1, Number(scene.durationSec) || 4);
+  const filter = buildSceneClipFilter(scene, data, captionFilePath, fontFile);
+  return [
+    "-y",
+    "-loop",
+    "1",
+    "-i",
+    scene.imagePath,
+    "-t",
+    duration.toFixed(3),
+    "-vf",
+    filter,
+    "-r",
+    String(data.fps),
+    "-c:v",
+    "libx264",
+    "-preset",
+    "medium",
+    "-crf",
+    "22",
+    "-pix_fmt",
+    "yuv420p",
+    "-an",
+    clipPath,
+  ];
+}
+
+async function renderSceneVideoTrack(scenes, data, tempDir, requestId, fontFile) {
+  const clipPaths = [];
+  for (let i = 0; i < scenes.length; i += 1) {
+    const scene = scenes[i];
+    const clipPath = path.join(tempDir, `scene-${String(i + 1).padStart(2, "0")}.mp4`);
+    const wrappedCaption = wrapCaption(scene.caption || scene.action);
+    const captionPath = wrappedCaption && fontFile
+      ? path.join(tempDir, `scene-${String(i + 1).padStart(2, "0")}-caption.txt`)
+      : "";
+    if (captionPath) {
+      // eslint-disable-next-line no-await-in-loop
+      await fs.writeFile(captionPath, `${wrappedCaption}\n`, "utf8");
+    }
+    const args = buildSceneClipArgs(scene, data, clipPath, captionPath, fontFile);
+    // eslint-disable-next-line no-await-in-loop
+    await runCommand("ffmpeg", args, { timeoutMs: 4 * 60 * 1000 });
+    clipPaths.push(clipPath);
+  }
+
+  if (clipPaths.length === 1) {
+    return clipPaths[0];
+  }
+
+  const concatListPath = path.join(tempDir, `scene-list-${requestId}.txt`);
+  const concatList = `${clipPaths.map((clipPath) => `file '${escapeConcatFilePath(clipPath)}'`).join("\n")}\n`;
+  await fs.writeFile(concatListPath, concatList, "utf8");
+
+  const mergedPath = path.join(tempDir, `scene-track-${requestId}.mp4`);
+  await runCommand(
+    "ffmpeg",
+    [
+      "-y",
+      "-f",
+      "concat",
+      "-safe",
+      "0",
+      "-i",
+      concatListPath,
+      "-c:v",
+      "libx264",
+      "-preset",
+      "medium",
+      "-crf",
+      "22",
+      "-pix_fmt",
+      "yuv420p",
+      "-r",
+      String(data.fps),
+      "-an",
+      mergedPath,
+    ],
+    { timeoutMs: 4 * 60 * 1000 }
+  );
+  return mergedPath;
+}
+
+function buildMuxArgs(videoPath, outputPath, data, audioPath) {
+  const args = ["-y", "-i", videoPath];
+  if (audioPath) {
+    args.push("-i", audioPath);
+  }
+
+  args.push(
+    "-c:v",
+    "libx264",
+    "-preset",
+    "medium",
+    "-crf",
+    "22",
+    "-pix_fmt",
+    "yuv420p",
+    "-movflags",
+    "+faststart"
+  );
+
+  if (audioPath) {
+    args.push(
+      "-map",
+      "0:v:0",
+      "-map",
+      "1:a:0",
+      "-c:a",
+      "aac",
+      "-b:a",
+      "192k",
+      "-ar",
+      "48000",
+      "-ac",
+      "2",
+      "-shortest"
+    );
+  } else {
+    args.push("-an");
+  }
+
+  args.push("-r", String(data.fps), outputPath);
+  return args;
+}
+
 function isDrawTextFailure(error) {
   const stderr = String(error?.stderr || "");
   const message = String(error?.message || "");
@@ -789,23 +1092,9 @@ app.post("/render", async (req, res) => {
     await ensureDir(tempDir);
 
     const safeAudioPaths = await normalizeAudioPaths(data.audioPaths);
-    const overlayText = buildOverlayText(data);
-    const titleTextPath = path.join(tempDir, "title.txt");
-    const bodyTextPath = path.join(tempDir, "body.txt");
-    await fs.writeFile(titleTextPath, `${overlayText.title}\n`, "utf8");
-    await fs.writeFile(bodyTextPath, `${overlayText.body}\n`, "utf8");
-
+    const safeScenes = await normalizeSceneImagePaths(data.scenes);
     const fontFile = await resolveFontFile();
     const audio = await prepareAudioTrack(safeAudioPaths, data.audioMode, tempDir, requestId);
-    const { args, sourceDuration } = buildFfmpegArgs(
-      data,
-      output.outputPath,
-      titleTextPath,
-      bodyTextPath,
-      audio.audioPath,
-      audio.audioDuration,
-      fontFile
-    );
 
     logInfo("render_started", {
       requestId,
@@ -815,25 +1104,48 @@ app.post("/render", async (req, res) => {
       height: data.height,
       fps: data.fps,
       requestedDuration: data.duration,
-      sourceDuration,
       audioCount: safeAudioPaths.length,
+      sceneCount: safeScenes.length,
       audioMode: data.audioMode,
     });
 
-    let usedOverlay = true;
-    try {
-      await runCommand("ffmpeg", args, { timeoutMs: 8 * 60 * 1000 });
-    } catch (error) {
-      if (!isDrawTextFailure(error)) {
-        throw error;
+    let usedOverlay = false;
+    if (safeScenes.length > 0) {
+      const sceneTrackPath = await renderSceneVideoTrack(safeScenes, data, tempDir, requestId, fontFile);
+      const muxArgs = buildMuxArgs(sceneTrackPath, output.outputPath, data, audio.audioPath);
+      await runCommand("ffmpeg", muxArgs, { timeoutMs: 8 * 60 * 1000 });
+      usedOverlay = Boolean(fontFile);
+    } else {
+      const overlayText = buildOverlayText(data);
+      const titleTextPath = path.join(tempDir, "title.txt");
+      const bodyTextPath = path.join(tempDir, "body.txt");
+      await fs.writeFile(titleTextPath, `${overlayText.title}\n`, "utf8");
+      await fs.writeFile(bodyTextPath, `${overlayText.body}\n`, "utf8");
+      const { args } = buildFfmpegArgs(
+        data,
+        output.outputPath,
+        titleTextPath,
+        bodyTextPath,
+        audio.audioPath,
+        audio.audioDuration,
+        fontFile
+      );
+
+      usedOverlay = true;
+      try {
+        await runCommand("ffmpeg", args, { timeoutMs: 8 * 60 * 1000 });
+      } catch (error) {
+        if (!isDrawTextFailure(error)) {
+          throw error;
+        }
+        usedOverlay = false;
+        logInfo("render_retry_without_drawtext", {
+          requestId,
+          reason: "drawtext_or_fontconfig_unavailable",
+        });
+        const fallback = buildFallbackFfmpegArgs(data, output.outputPath, audio.audioPath, audio.audioDuration);
+        await runCommand("ffmpeg", fallback.args, { timeoutMs: 8 * 60 * 1000 });
       }
-      usedOverlay = false;
-      logInfo("render_retry_without_drawtext", {
-        requestId,
-        reason: "drawtext_or_fontconfig_unavailable",
-      });
-      const fallback = buildFallbackFfmpegArgs(data, output.outputPath, audio.audioPath, audio.audioDuration);
-      await runCommand("ffmpeg", fallback.args, { timeoutMs: 8 * 60 * 1000 });
     }
 
     const outputDuration = await probeMediaDuration(output.outputPath);
@@ -859,6 +1171,7 @@ app.post("/render", async (req, res) => {
       height: data.height,
       fps: data.fps,
       audioCount: safeAudioPaths.length,
+      sceneCount: safeScenes.length,
       overlayEnabled: usedOverlay,
       requestId,
     });
