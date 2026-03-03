@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -22,6 +23,14 @@ type ScriptWriter struct {
 	ScriptOutputDir  string
 	Now              func() time.Time
 }
+
+var (
+	directiveLinePattern  = regexp.MustCompile(`(?i)^\s*(сцена|кадр|камера|видео|музыка|звук|переход|анимац|действие|action|scene|camera|shot|music|sfx)\s*[:\-]`)
+	directiveWordPattern  = regexp.MustCompile(`(?i)(сцена|кадр|камера|видео|музыка|звук|переход|анимац|action|scene|camera|shot|music|sfx)`)
+	dialogueLabelPattern  = regexp.MustCompile(`(?i)^\s*\[(ведущий|диктор|narrator|voice[\s-]?over|speaker)\]\s*:\s*`)
+	dialogueLabelPattern2 = regexp.MustCompile(`(?i)^\s*(ведущий|диктор|narrator|voice[\s-]?over|speaker)\s*:\s*`)
+	spacePattern          = regexp.MustCompile(`\s+`)
+)
 
 func NewScriptWriter(generator services.ScriptGenerator, maxDurationSec int, scriptOutputDir string) *ScriptWriter {
 	return &ScriptWriter{
@@ -46,7 +55,7 @@ func (w *ScriptWriter) Write(ctx context.Context, content models.Content) (model
 	if err != nil {
 		return models.Script{}, "", fmt.Errorf("generate narration: %w", err)
 	}
-	segments, total := w.segmentAndTime(text)
+	segments, total := w.segmentAndTime(cleanNarrationForVoice(text))
 	if total > float64(w.MaxDurationSec) {
 		segments, total = w.trimToMaxDuration(segments, float64(w.MaxDurationSec))
 	}
@@ -85,7 +94,7 @@ func (w *ScriptWriter) segmentAndTime(text string) ([]models.ScriptSegment, floa
 	var total float64
 	order := 1
 	for _, part := range parts {
-		segmentText := strings.TrimSpace(part)
+		segmentText := sanitizeNarrationChunk(part)
 		if segmentText == "" {
 			continue
 		}
@@ -161,14 +170,8 @@ func (w *ScriptWriter) findExistingScript(content models.Content) (models.Script
 		if script.ContentSlug != content.Slug || len(script.Segments) == 0 {
 			continue
 		}
-
+		script.Segments, script.TotalDurationSec = w.sanitizeExistingSegments(script.Segments)
 		total := script.TotalDurationSec
-		if total <= 0 {
-			for _, segment := range script.Segments {
-				total += segment.DurationSec
-			}
-			script.TotalDurationSec = total
-		}
 		if total <= 0 || total > float64(w.MaxDurationSec) {
 			continue
 		}
@@ -184,4 +187,92 @@ func (w *ScriptWriter) findExistingScript(content models.Content) (models.Script
 		return script, path, true, nil
 	}
 	return models.Script{}, "", false, nil
+}
+
+func cleanNarrationForVoice(raw string) string {
+	raw = strings.ReplaceAll(raw, "\r\n", "\n")
+	raw = strings.ReplaceAll(raw, "\r", "\n")
+	lines := strings.Split(raw, "\n")
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		clean := sanitizeNarrationChunk(line)
+		if clean == "" {
+			continue
+		}
+		out = append(out, clean)
+	}
+	return strings.TrimSpace(strings.Join(out, " "))
+}
+
+func sanitizeNarrationChunk(chunk string) string {
+	text := strings.TrimSpace(chunk)
+	if text == "" {
+		return ""
+	}
+
+	text = strings.TrimLeft(text, "[](){}-–—* \t")
+	text = strings.TrimRight(text, "[](){}-–—* \t")
+	text = dialogueLabelPattern.ReplaceAllString(text, "")
+	text = dialogueLabelPattern2.ReplaceAllString(text, "")
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+
+	if directiveLinePattern.MatchString(text) {
+		return ""
+	}
+
+	if strings.HasPrefix(strings.ToLower(text), "видео начинается") {
+		return ""
+	}
+	if strings.HasPrefix(strings.ToLower(text), "смена кадра") {
+		return ""
+	}
+
+	if strings.HasPrefix(text, "[") && directiveWordPattern.MatchString(text) {
+		return ""
+	}
+
+	if strings.Contains(text, "[") && directiveWordPattern.MatchString(text) {
+		cut := strings.Index(text, "[")
+		if cut >= 0 {
+			text = strings.TrimSpace(text[:cut])
+		}
+	}
+
+	text = spacePattern.ReplaceAllString(text, " ")
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	return text
+}
+
+func (w *ScriptWriter) sanitizeExistingSegments(segments []models.ScriptSegment) ([]models.ScriptSegment, float64) {
+	out := make([]models.ScriptSegment, 0, len(segments))
+	var total float64
+	order := 1
+	for _, segment := range segments {
+		clean := sanitizeNarrationChunk(segment.Text)
+		if clean == "" {
+			continue
+		}
+		if !strings.HasSuffix(clean, ".") && !strings.HasSuffix(clean, "!") && !strings.HasSuffix(clean, "?") {
+			clean += "."
+		}
+		duration := float64(utf8.RuneCountInString(clean)) / w.CharactersPerSec
+		if duration < 1 {
+			duration = 1
+		}
+		out = append(out, models.ScriptSegment{
+			Order:       order,
+			Text:        clean,
+			DurationSec: duration,
+			ActionCue:   actionCueForOrder(order),
+		})
+		total += duration
+		order++
+	}
+	return out, total
 }
