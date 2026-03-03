@@ -1,67 +1,124 @@
-# try-go-secrets bootstrap
+# try-go-secrets
 
-This repository is bootstrapped for local/dev execution of a Go pipeline plus a Puppeteer rendering service.
+Production-ready пайплайн для генерации вертикальных видео (YouTube Shorts) из Markdown-файлов с Go-секретами:
 
-## What is wired
+- сценарий (LLM),
+- озвучка (TTS),
+- сцены с героем и экшеном (AI images),
+- финальный рендер MP4 через Puppeteer + FFmpeg.
 
-- `Dockerfile`: Go runtime image with FFmpeg.
-- `Dockerfile.puppeteer`: Node + Chromium + FFmpeg image for video rendering.
-- `docker-compose.yml`: two services (`app`, `puppeteer`) with shared runtime mounts.
-- `Taskfile.yml`: primary command entrypoint for setup, preflight validation, smoke checks, local run, and docker run.
-- `scripts/run.sh`: thin compatibility shim that delegates to Task tasks (no duplicated run logic).
-- `.env.example`: environment template for API/config values.
-- `output/images`: AI-generated scene frames for hero/action visuals.
+Проект оптимизирован под ежедневный запуск, Docker-first workflow и повторные прогоны с кэшированием артефактов.
 
-## Volume mappings
+## Что умеет сейчас
 
-- `./raw -> /workspace/raw` (read-only in `app`)
-- `./output -> /workspace/output` (read-write in both services)
-- `./state -> /workspace/state` (read-write in `app`)
+- генерирует видео в формате `1080x1920` (`.mp4`, H.264/AAC);
+- поддерживает запуск по номеру (`NUM=43`) или случайный необработанный файл;
+- строит динамические сцены с камерой и подписями;
+- ведет состояние обработки (`state/processed.json`) и расход TTS (`state/tts_usage.json`);
+- переиспользует готовые артефакты (script/audio/images/video), если они уже существуют;
+- работает кроссплатформенно через `Taskfile.yml` + POSIX shell scripts.
 
-## Quick start
+## Технологии
 
-Prerequisites:
-- `bash` (all Task automation scripts are POSIX shell-based).
-- `curl` (used for smoke/health checks).
+| Слой | Стек |
+|---|---|
+| Оркестрация | Go 1.22+ |
+| LLM (сценарий) | z.ai / OpenAI-compatible Chat API |
+| TTS | Yandex SpeechKit |
+| Сцены | OpenAI-compatible Images API |
+| Рендер | Node.js service + FFmpeg |
+| Инфраструктура | Docker, Docker Compose, Taskfile |
 
-1. Bootstrap:
-   - `task setup`
-2. Install dependencies:
-   - `task deps`
-3. Put source markdown files into `raw/` (pattern `*-line-043.md` etc.).
-4. Validate environment:
-   - Dev defaults: `task preflight`
-   - Strict/prod check: `task preflight:strict:render`
-5. Run full docker pipeline:
-   - `task run NUM=43`
-   - or random: `task run`
+## Структура проекта
 
-## Common tasks
+```text
+cmd/                 # entrypoint
+pkg/                 # основная логика (agents, services, state, config)
+puppeteer/           # Node.js render service
+static/              # CSS/JS для шаблонов
+scripts/             # setup/preflight/healthcheck/reset
+raw/                 # входные markdown
+output/              # scripts/audio/images/videos/logs
+state/               # processed + tts usage
+```
 
-- `task preflight` - validate env/runtime prerequisites (`STRICT_ENV=true` enables strict secret checks).
-- `task preflight:strict:render` - strict mode and required render endpoint.
-- `task test` - run all Go tests.
-- `task build` - build all Go packages.
-- `task ci` - format + test + build.
-- `task puppeteer:dev` - start local Puppeteer service (foreground).
-- `task run:local NUM=43` - local run using `PUPPETEER_SERVICE_URL` (defaults to `http://127.0.0.1:3000/render`).
-- `task run:local:no-render NUM=43` - force placeholder renderer.
-- `task run:docker NUM=43` - run in Docker with Puppeteer.
-- `task run:docker:no-render NUM=43` - run in Docker without Puppeteer.
-- `task run:prod:local NUM=43` - local production-mode run with strict env checks.
-- `task run:prod:docker NUM=43` - Docker production-mode run with strict env checks.
-- `task smoke:local` - local smoke check (`go run ./cmd --help`).
-- `task smoke:docker` - Docker smoke check (Puppeteer health + app help).
-- `task smoke:prod:docker` - strict production-mode Docker smoke check.
-- `task state:reset` - reset `state/processed.json` and `state/tts_usage.json`.
+## Быстрый старт (Docker, рекомендовано)
 
-## Production run flow
+1. Подготовка:
 
-1. Configure secrets in `.env` (replace placeholder values for `ZAI_API_KEY` and `YANDEX_API_KEY`).
-   - For action scenes in strict mode also set `IMAGE_API_KEY` (or `OPENAI_API_KEY`) and `IMAGE_MODEL` (for example `gpt-image-1`).
-2. Validate strict prerequisites:
-   - `task preflight:strict:render`
-3. Run smoke check:
-   - `task smoke:prod:docker`
-4. Start production pipeline:
-   - `task run:prod:docker NUM=43`
+```bash
+task setup
+```
+
+2. Заполнить `.env` (минимум: `ZAI_API_KEY`, `YANDEX_API_KEY`, `YANDEX_FOLDER_ID`, `IMAGE_API_KEY`/`OPENAI_API_KEY`).
+
+3. Проверка окружения:
+
+```bash
+task preflight:strict:render
+```
+
+4. Запуск пайплайна:
+
+```bash
+task run:prod:docker NUM=43
+```
+
+## Основные команды
+
+```bash
+task deps                 # go mod tidy + npm ci
+task test                 # go test ./...
+task build                # go build ./...
+task docker:build         # собрать все образы
+task docker:up            # поднять render service
+task run:docker NUM=43    # запуск в docker
+task run:prod:docker      # strict/prod запуск
+task smoke:docker         # smoke-check
+task state:reset          # сброс состояния
+```
+
+## Ключевые переменные `.env`
+
+- `APP_ENV`, `STRICT_ENV`, `STRICT_REQUIRE_RENDER`
+- `RAW_DIR`, `OUTPUT_DIR`, `STATE_DIR`
+- `ZAI_API_KEY`, `ZAI_API_BASE_URL`, `ZAI_MODEL`
+- `YANDEX_API_KEY`, `YANDEX_FOLDER_ID`, `YANDEX_TTS_*`
+- `IMAGE_API_KEY`/`OPENAI_API_KEY`, `IMAGE_API_BASE_URL`, `IMAGE_MODEL`, `IMAGE_SIZE`
+- `VIDEO_REQUEST_TIMEOUT_SEC`, `VIDEO_MAX_RETRIES`
+- `PUPPETEER_SERVICE_URL`
+
+Актуальный шаблон см. в [.env.example](./.env.example).
+
+## Кэш и повторные запуски
+
+- При `NUM=<id>` контент можно гонять повторно.
+- Script очищается от режиссерских/камерных команд для TTS.
+- Если артефакты уже есть и валидны, они переиспользуются.
+- Если артефакта нет, он создается заново.
+
+## Частые проблемы
+
+1. `llm error 429` (z.ai): лимит/баланс тарифа.
+2. `tts error 401` (Yandex): `YANDEX_FOLDER_ID` не совпадает с ключом.
+3. `image api invalid size`: используйте `IMAGE_SIZE=1024x1536|1024x1024|1536x1024|auto`.
+4. `render timeout`: увеличьте `VIDEO_REQUEST_TIMEOUT_SEC` (например `600`).
+5. “кривой” docker-лог: в задачах уже принудительно включен plain-вывод (`--ansi never`, `--progress plain`).
+
+## Локальная разработка
+
+```bash
+task run:local NUM=43
+task puppeteer:dev
+```
+
+Если нужен режим без рендера:
+
+```bash
+task run:local:no-render NUM=43
+```
+
+## Лицензия и безопасность
+
+- Не коммитьте `.env`, `output/*`, приватные ключи.
+- `state/*.json` — runtime-состояние, обычно не должно попадать в PR.
