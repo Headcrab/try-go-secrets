@@ -88,11 +88,30 @@ func (w *ScriptWriter) segmentAndTime(text string) ([]models.ScriptSegment, floa
 			Order:       order,
 			Text:        segmentText,
 			DurationSec: duration,
+			ActionCue:   actionCueForOrder(order),
 		})
 		total += duration
 		order++
 	}
 	return segments, total
+}
+
+func actionCueForOrder(order int) string {
+	cues := []string{
+		"герой врывается в кадр и формулирует проблему",
+		"герой показывает код до исправления",
+		"герой меняет подход и запускает решение",
+		"герой объясняет выигрыш по скорости и стабильности",
+		"герой завершает выводом и призывом попробовать",
+	}
+	if len(cues) == 0 {
+		return ""
+	}
+	index := (order - 1) % len(cues)
+	if index < 0 {
+		index = 0
+	}
+	return cues[index]
 }
 
 func (w *ScriptWriter) trimToMaxDuration(segments []models.ScriptSegment, max float64) ([]models.ScriptSegment, float64) {

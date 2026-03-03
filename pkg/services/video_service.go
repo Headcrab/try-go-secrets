@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"mime"
 	"net/http"
 	"net/url"
@@ -80,11 +81,16 @@ func (s *VideoService) Render(ctx context.Context, spec models.VideoSpec, audioP
 	}
 
 	duration := 5
-	if len(audioPaths) > 0 {
+	if sceneDuration := totalSceneDuration(spec.Scenes); sceneDuration > 0 {
+		duration = int(math.Ceil(sceneDuration))
+	} else if len(audioPaths) > 0 {
 		duration = len(audioPaths) * 4
-		if duration > 55 {
-			duration = 55
-		}
+	}
+	if duration > 55 {
+		duration = 55
+	}
+	if duration < 1 {
+		duration = 1
 	}
 
 	payload, err := json.Marshal(map[string]any{
@@ -96,6 +102,9 @@ func (s *VideoService) Render(ctx context.Context, spec models.VideoSpec, audioP
 		"outputDir":       filepath.Dir(outputPath),
 		"outputFileName":  filepath.Base(outputPath),
 		"title":           spec.Title,
+		"codeBlocks":      spec.CodeBlocks,
+		"mermaidBlocks":   spec.MermaidBlocks,
+		"scenes":          spec.Scenes,
 		"audioPaths":      audioPaths,
 	})
 	if err != nil {
@@ -189,8 +198,8 @@ func (s *VideoService) sendWithRetry(ctx context.Context, payload []byte) ([]byt
 
 func (s *VideoService) writePlaceholderMP4(spec models.VideoSpec, outputPath string) error {
 	content := fmt.Sprintf(
-		"MVP placeholder MP4\nTitle: %s\nCode blocks: %d\nMermaid blocks: %d\n",
-		spec.Title, len(spec.CodeBlocks), len(spec.MermaidBlocks),
+		"MVP placeholder MP4\nTitle: %s\nCode blocks: %d\nMermaid blocks: %d\nScenes: %d\n",
+		spec.Title, len(spec.CodeBlocks), len(spec.MermaidBlocks), len(spec.Scenes),
 	)
 	if err := os.WriteFile(outputPath, []byte(content), 0o644); err != nil {
 		return fmt.Errorf("write placeholder mp4: %w", err)
@@ -247,4 +256,15 @@ func copyFile(source, dest string) error {
 
 func samePath(a, b string) bool {
 	return filepath.Clean(a) == filepath.Clean(b)
+}
+
+func totalSceneDuration(scenes []models.VideoScene) float64 {
+	var total float64
+	for _, scene := range scenes {
+		if scene.DurationSec <= 0 {
+			continue
+		}
+		total += scene.DurationSec
+	}
+	return total
 }

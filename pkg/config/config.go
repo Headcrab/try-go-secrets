@@ -16,6 +16,7 @@ const (
 	defaultDailyTTSLimit    = 2000
 	defaultMaxVideoDuration = 60
 	defaultAppEnv           = "development"
+	defaultHeroProfile      = "харизматичный инженер в бирюзовой худи, главный герой техно-истории"
 
 	defaultZAIBaseURL          = "https://api.z.ai/v1"
 	defaultZAIModel            = "glm-4.7"
@@ -34,6 +35,12 @@ const (
 	defaultVideoTimeoutSec     = 60
 	defaultVideoMaxRetries     = 2
 	defaultVideoRetryBackoffMs = 1000
+	defaultImageBaseURL        = "https://api.openai.com/v1"
+	defaultImageModel          = "gpt-image-1"
+	defaultImageSize           = "1024x1792"
+	defaultImageTimeoutSec     = 45
+	defaultImageMaxRetries     = 2
+	defaultImageRetryBackoffMs = 1000
 )
 
 type Config struct {
@@ -47,10 +54,12 @@ type Config struct {
 	TTSUsageStatePath      string
 	OutputScriptsDir       string
 	OutputAudioDir         string
+	OutputImagesDir        string
 	OutputVideosDir        string
 	OutputLogsDir          string
 	MaxVideoDurationSec    int
 	TTSDailyCharacterLimit int
+	HeroProfile            string
 
 	PuppeteerServiceURL string
 
@@ -77,6 +86,14 @@ type Config struct {
 	VideoTimeout      time.Duration
 	VideoMaxRetries   int
 	VideoRetryBackoff time.Duration
+
+	ImageAPIKey       string
+	ImageAPIBaseURL   string
+	ImageModel        string
+	ImageSize         string
+	ImageTimeout      time.Duration
+	ImageMaxRetries   int
+	ImageRetryBackoff time.Duration
 }
 
 func LoadFromEnv() (Config, error) {
@@ -138,6 +155,18 @@ func LoadFromEnv() (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("parse VIDEO_RETRY_BACKOFF_MS: %w", err)
 	}
+	imageTimeoutSec, err := getEnvInt("IMAGE_REQUEST_TIMEOUT_SEC", defaultImageTimeoutSec)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse IMAGE_REQUEST_TIMEOUT_SEC: %w", err)
+	}
+	imageRetries, err := getEnvInt("IMAGE_MAX_RETRIES", defaultImageMaxRetries)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse IMAGE_MAX_RETRIES: %w", err)
+	}
+	imageBackoffMS, err := getEnvInt("IMAGE_RETRY_BACKOFF_MS", defaultImageRetryBackoffMs)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse IMAGE_RETRY_BACKOFF_MS: %w", err)
+	}
 	ttsSpeed, err := getEnvFloat64("YANDEX_TTS_SPEED", defaultTTSSpeed)
 	if err != nil {
 		return Config{}, fmt.Errorf("parse YANDEX_TTS_SPEED: %w", err)
@@ -161,10 +190,12 @@ func LoadFromEnv() (Config, error) {
 		TTSUsageStatePath:      filepath.Join(stateDir, "tts_usage.json"),
 		OutputScriptsDir:       filepath.Join(outputDir, "scripts"),
 		OutputAudioDir:         filepath.Join(outputDir, "audio"),
+		OutputImagesDir:        filepath.Join(outputDir, "images"),
 		OutputVideosDir:        filepath.Join(outputDir, "videos"),
 		OutputLogsDir:          filepath.Join(outputDir, "logs"),
 		MaxVideoDurationSec:    maxDur,
 		TTSDailyCharacterLimit: ttsLimit,
+		HeroProfile:            getEnv("SCENE_HERO_PROFILE", defaultHeroProfile),
 		PuppeteerServiceURL:    firstNonEmpty(os.Getenv("PUPPETEER_SERVICE_URL"), os.Getenv("PUPPETEER_BASE_URL")),
 		ZAIAPIKey:              os.Getenv("ZAI_API_KEY"),
 		ZAIAPIBaseURL:          getEnv("ZAI_API_BASE_URL", defaultZAIBaseURL),
@@ -187,6 +218,26 @@ func LoadFromEnv() (Config, error) {
 		VideoTimeout:           time.Duration(videoTimeoutSec) * time.Second,
 		VideoMaxRetries:        videoRetries,
 		VideoRetryBackoff:      time.Duration(videoBackoffMS) * time.Millisecond,
+		ImageAPIKey: firstNonEmpty(
+			os.Getenv("IMAGE_API_KEY"),
+			os.Getenv("OPENAI_API_KEY"),
+			os.Getenv("ZAI_API_KEY"),
+		),
+		ImageAPIBaseURL: firstNonEmpty(
+			os.Getenv("IMAGE_API_BASE_URL"),
+			os.Getenv("OPENAI_API_BASE_URL"),
+			os.Getenv("ZAI_API_BASE_URL"),
+			defaultImageBaseURL,
+		),
+		ImageModel: firstNonEmpty(
+			os.Getenv("IMAGE_MODEL"),
+			os.Getenv("OPENAI_IMAGE_MODEL"),
+			defaultImageModel,
+		),
+		ImageSize:         getEnv("IMAGE_SIZE", defaultImageSize),
+		ImageTimeout:      time.Duration(imageTimeoutSec) * time.Second,
+		ImageMaxRetries:   imageRetries,
+		ImageRetryBackoff: time.Duration(imageBackoffMS) * time.Millisecond,
 	}
 	if err := cfg.validate(); err != nil {
 		return Config{}, err
@@ -204,6 +255,7 @@ func (c Config) ensureDirs() error {
 		c.OutputDir,
 		c.OutputScriptsDir,
 		c.OutputAudioDir,
+		c.OutputImagesDir,
 		c.OutputVideosDir,
 		c.OutputLogsDir,
 	}
@@ -345,6 +397,27 @@ func (c Config) validate() error {
 	if c.VideoRetryBackoff <= 0 {
 		return fmt.Errorf("VIDEO_RETRY_BACKOFF_MS must be > 0")
 	}
+	if c.ImageTimeout <= 0 {
+		return fmt.Errorf("IMAGE_REQUEST_TIMEOUT_SEC must be > 0")
+	}
+	if c.ImageMaxRetries < 0 {
+		return fmt.Errorf("IMAGE_MAX_RETRIES must be >= 0")
+	}
+	if c.ImageRetryBackoff <= 0 {
+		return fmt.Errorf("IMAGE_RETRY_BACKOFF_MS must be > 0")
+	}
+	if strings.TrimSpace(c.ImageAPIBaseURL) == "" {
+		return fmt.Errorf("IMAGE_API_BASE_URL cannot be empty")
+	}
+	if strings.TrimSpace(c.ImageModel) == "" {
+		return fmt.Errorf("IMAGE_MODEL cannot be empty")
+	}
+	if strings.TrimSpace(c.ImageSize) == "" {
+		return fmt.Errorf("IMAGE_SIZE cannot be empty")
+	}
+	if strings.TrimSpace(c.HeroProfile) == "" {
+		return fmt.Errorf("SCENE_HERO_PROFILE cannot be empty")
+	}
 	if c.StrictMode {
 		if strings.TrimSpace(c.ZAIAPIKey) == "" {
 			return fmt.Errorf("ZAI_API_KEY is required in strict mode")
@@ -357,6 +430,9 @@ func (c Config) validate() error {
 		}
 		if strings.TrimSpace(c.PuppeteerServiceURL) == "" {
 			return fmt.Errorf("PUPPETEER_SERVICE_URL is required in strict mode")
+		}
+		if strings.TrimSpace(c.ImageAPIKey) == "" {
+			return fmt.Errorf("IMAGE_API_KEY (or OPENAI_API_KEY) is required in strict mode")
 		}
 	}
 	return nil

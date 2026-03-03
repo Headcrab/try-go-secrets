@@ -59,6 +59,16 @@ func run() error {
 		cfg.OutputScriptsDir,
 	)
 	extractor := agents.NewCodeExtractor()
+	imageService := services.NewImageService(services.ImageServiceOptions{
+		APIKey:       cfg.ImageAPIKey,
+		BaseURL:      cfg.ImageAPIBaseURL,
+		Model:        cfg.ImageModel,
+		Size:         cfg.ImageSize,
+		Timeout:      cfg.ImageTimeout,
+		MaxRetries:   cfg.ImageMaxRetries,
+		RetryBackoff: cfg.ImageRetryBackoff,
+		StrictMode:   cfg.StrictMode,
+	})
 	generator := agents.NewVideoGenerator(
 		services.NewTTSService(services.TTSServiceOptions{
 			APIKey:          cfg.YandexAPIKey,
@@ -75,6 +85,7 @@ func run() error {
 			StrictMode:      cfg.StrictMode,
 			AllowFallback:   cfg.TTSAllowFallback,
 		}),
+		imageService,
 		services.NewVideoService(services.VideoServiceOptions{
 			PuppeteerURL: cfg.PuppeteerServiceURL,
 			Timeout:      cfg.VideoTimeout,
@@ -85,7 +96,9 @@ func run() error {
 		ttsUsage,
 		cfg.TTSDailyCharacterLimit,
 		cfg.OutputAudioDir,
+		cfg.OutputImagesDir,
 		cfg.OutputVideosDir,
+		cfg.HeroProfile,
 	)
 	checker := agents.NewQualityChecker(cfg.MaxVideoDurationSec, processed)
 

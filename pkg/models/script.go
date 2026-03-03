@@ -6,6 +6,7 @@ type ScriptSegment struct {
 	Order       int     `json:"order"`
 	Text        string  `json:"text"`
 	DurationSec float64 `json:"duration_sec"`
+	ActionCue   string  `json:"action_cue,omitempty"`
 }
 
 type Script struct {
