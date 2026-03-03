@@ -2,8 +2,12 @@ package agents
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"fmt"
+	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -49,34 +53,42 @@ func NewVideoGenerator(
 }
 
 func (g *VideoGenerator) Generate(ctx context.Context, script models.Script, spec models.VideoSpec) (string, []string, error) {
+	artifactKey := scriptArtifactKey(script)
 	audioPaths := make([]string, 0, len(script.Segments))
-	runStamp := g.Now().Format("2006-01-02-150405.000")
+	videoPath := filepath.Join(g.VideoOutputDir, fmt.Sprintf("%s-%s.mp4", script.ContentSlug, artifactKey))
+	if existing := latestExistingFile(videoPath, videoLegacyPatterns(g.VideoOutputDir, script.ContentSlug)...); existing != "" {
+		return existing, audioPaths, nil
+	}
 
 	for _, segment := range script.Segments {
+		audioPath := filepath.Join(g.AudioOutputDir, fmt.Sprintf("%s-%s-%02d.wav", script.ContentSlug, artifactKey, segment.Order))
+		if existing := latestExistingFile(audioPath, audioLegacyPatterns(g.AudioOutputDir, script.ContentSlug, segment.Order)...); existing != "" {
+			audioPaths = append(audioPaths, existing)
+			continue
+		}
+
 		chars := utf8.RuneCountInString(segment.Text)
 		if err := g.TTSUsage.Consume(chars, g.TTSDailyLimit, g.Now()); err != nil {
 			return "", nil, fmt.Errorf("tts quota check for segment %d: %w", segment.Order, err)
 		}
-		audioPath := filepath.Join(g.AudioOutputDir, fmt.Sprintf("%s-%s-%02d.wav", runStamp, script.ContentSlug, segment.Order))
 		if err := g.TTS.Synthesize(ctx, segment.Text, audioPath); err != nil {
 			return "", nil, fmt.Errorf("synthesize segment %d: %w", segment.Order, err)
 		}
 		audioPaths = append(audioPaths, audioPath)
 	}
-	scenes, err := g.generateScenes(ctx, script, spec.Title, runStamp)
+	scenes, err := g.generateScenes(ctx, script, spec.Title, artifactKey)
 	if err != nil {
 		return "", nil, fmt.Errorf("generate scenes: %w", err)
 	}
 	spec.Scenes = scenes
 
-	videoPath := filepath.Join(g.VideoOutputDir, fmt.Sprintf("%s-%s.mp4", runStamp, script.ContentSlug))
 	if err := g.Renderer.Render(ctx, spec, audioPaths, videoPath); err != nil {
 		return "", nil, fmt.Errorf("render video: %w", err)
 	}
 	return videoPath, audioPaths, nil
 }
 
-func (g *VideoGenerator) generateScenes(ctx context.Context, script models.Script, title, datePrefix string) ([]models.VideoScene, error) {
+func (g *VideoGenerator) generateScenes(ctx context.Context, script models.Script, title, artifactKey string) ([]models.VideoScene, error) {
 	if len(script.Segments) == 0 {
 		return nil, nil
 	}
@@ -95,9 +107,11 @@ func (g *VideoGenerator) generateScenes(ctx context.Context, script models.Scrip
 		prompt := g.buildScenePrompt(title, caption, action, segment.Order, len(script.Segments))
 		imagePath := filepath.Join(
 			g.ImageOutputDir,
-			fmt.Sprintf("%s-%s-scene-%02d.png", datePrefix, script.ContentSlug, segment.Order),
+			fmt.Sprintf("%s-%s-scene-%02d.png", script.ContentSlug, artifactKey, segment.Order),
 		)
-		if g.ImageGenerator != nil {
+		if existing := latestExistingFile(imagePath, imageLegacyPatterns(g.ImageOutputDir, script.ContentSlug, segment.Order)...); existing != "" {
+			imagePath = existing
+		} else if g.ImageGenerator != nil {
 			if err := g.ImageGenerator.Generate(ctx, prompt, imagePath); err != nil {
 				return nil, fmt.Errorf("generate scene %d image: %w", segment.Order, err)
 			}
@@ -168,4 +182,91 @@ func compactText(value string, maxRunes int) string {
 		return string(runes[:maxRunes])
 	}
 	return string(runes[:maxRunes-3]) + "..."
+}
+
+func scriptArtifactKey(script models.Script) string {
+	h := sha1.New()
+	h.Write([]byte(script.ContentSlug))
+	h.Write([]byte{0})
+	for _, segment := range script.Segments {
+		h.Write([]byte(segment.Text))
+		h.Write([]byte{0})
+		h.Write([]byte(fmt.Sprintf("%.3f", segment.DurationSec)))
+		h.Write([]byte{0})
+		h.Write([]byte(segment.ActionCue))
+		h.Write([]byte{0})
+	}
+	sum := hex.EncodeToString(h.Sum(nil))
+	if len(sum) < 12 {
+		return sum
+	}
+	return sum[:12]
+}
+
+func latestExistingFile(primary string, fallbackPatterns ...string) string {
+	bestPath := ""
+	bestModTime := time.Time{}
+
+	candidates := []string{primary}
+	for _, pattern := range fallbackPatterns {
+		if pattern == "" {
+			continue
+		}
+		matches, err := filepath.Glob(pattern)
+		if err != nil {
+			continue
+		}
+		candidates = append(candidates, matches...)
+	}
+
+	seen := map[string]struct{}{}
+	for _, candidate := range candidates {
+		candidate = filepath.Clean(candidate)
+		if _, ok := seen[candidate]; ok {
+			continue
+		}
+		seen[candidate] = struct{}{}
+
+		info, err := os.Stat(candidate)
+		if err != nil || info.IsDir() || info.Size() <= 0 {
+			continue
+		}
+		if bestPath == "" || info.ModTime().After(bestModTime) {
+			bestPath = candidate
+			bestModTime = info.ModTime()
+		}
+	}
+	return bestPath
+}
+
+func audioLegacyPatterns(baseDir, slug string, order int) []string {
+	return sortPatternsBySpecificity([]string{
+		filepath.Join(baseDir, fmt.Sprintf("*-%s-%02d.wav", slug, order)),
+		filepath.Join(baseDir, fmt.Sprintf("%s-*-*-%02d.wav", slug, order)),
+	})
+}
+
+func imageLegacyPatterns(baseDir, slug string, order int) []string {
+	return sortPatternsBySpecificity([]string{
+		filepath.Join(baseDir, fmt.Sprintf("*-%s-scene-%02d.png", slug, order)),
+		filepath.Join(baseDir, fmt.Sprintf("%s-*-scene-%02d.png", slug, order)),
+	})
+}
+
+func videoLegacyPatterns(baseDir, slug string) []string {
+	return sortPatternsBySpecificity([]string{
+		filepath.Join(baseDir, fmt.Sprintf("*-%s.mp4", slug)),
+		filepath.Join(baseDir, fmt.Sprintf("%s-*.mp4", slug)),
+	})
+}
+
+func sortPatternsBySpecificity(patterns []string) []string {
+	filtered := make([]string, 0, len(patterns))
+	for _, p := range patterns {
+		if strings.TrimSpace(p) != "" {
+			filtered = append(filtered, p)
+		}
+	}
+	sort.Strings(filtered)
+	return filtered
 }

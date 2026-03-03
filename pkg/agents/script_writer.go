@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -33,6 +34,14 @@ func NewScriptWriter(generator services.ScriptGenerator, maxDurationSec int, scr
 }
 
 func (w *ScriptWriter) Write(ctx context.Context, content models.Content) (models.Script, string, error) {
+	cachedScript, cachedPath, found, err := w.findExistingScript(content)
+	if err != nil {
+		return models.Script{}, "", err
+	}
+	if found {
+		return cachedScript, cachedPath, nil
+	}
+
 	text, err := w.Generator.GenerateNarration(ctx, content)
 	if err != nil {
 		return models.Script{}, "", fmt.Errorf("generate narration: %w", err)
@@ -126,4 +135,53 @@ func (w *ScriptWriter) trimToMaxDuration(segments []models.ScriptSegment, max fl
 		total += segment.DurationSec
 	}
 	return out, total
+}
+
+func (w *ScriptWriter) findExistingScript(content models.Content) (models.Script, string, bool, error) {
+	pattern := filepath.Join(w.ScriptOutputDir, fmt.Sprintf("*-%s.json", content.Slug))
+	matches, err := filepath.Glob(pattern)
+	if err != nil {
+		return models.Script{}, "", false, fmt.Errorf("find existing scripts: %w", err)
+	}
+	if len(matches) == 0 {
+		return models.Script{}, "", false, nil
+	}
+	sort.Strings(matches)
+
+	for i := len(matches) - 1; i >= 0; i-- {
+		path := matches[i]
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			continue
+		}
+		var script models.Script
+		if decodeErr := json.Unmarshal(data, &script); decodeErr != nil {
+			continue
+		}
+		if script.ContentSlug != content.Slug || len(script.Segments) == 0 {
+			continue
+		}
+
+		total := script.TotalDurationSec
+		if total <= 0 {
+			for _, segment := range script.Segments {
+				total += segment.DurationSec
+			}
+			script.TotalDurationSec = total
+		}
+		if total <= 0 || total > float64(w.MaxDurationSec) {
+			continue
+		}
+		if script.SourcePath == "" {
+			script.SourcePath = content.FilePath
+		}
+		if script.ContentID == 0 {
+			script.ContentID = content.ID
+		}
+		if script.GeneratedBy == "" {
+			script.GeneratedBy = "cached_script"
+		}
+		return script, path, true, nil
+	}
+	return models.Script{}, "", false, nil
 }
