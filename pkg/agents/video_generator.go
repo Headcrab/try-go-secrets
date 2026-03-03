@@ -56,13 +56,13 @@ func (g *VideoGenerator) Generate(ctx context.Context, script models.Script, spe
 	artifactKey := scriptArtifactKey(script)
 	audioPaths := make([]string, 0, len(script.Segments))
 	videoPath := filepath.Join(g.VideoOutputDir, fmt.Sprintf("%s-%s.mp4", script.ContentSlug, artifactKey))
-	if existing := latestExistingFile(videoPath, videoLegacyPatterns(g.VideoOutputDir, script.ContentSlug)...); existing != "" {
+	if existing := latestExistingFile(videoPath); existing != "" {
 		return existing, audioPaths, nil
 	}
 
 	for _, segment := range script.Segments {
 		audioPath := filepath.Join(g.AudioOutputDir, fmt.Sprintf("%s-%s-%02d.wav", script.ContentSlug, artifactKey, segment.Order))
-		if existing := latestExistingFile(audioPath, audioLegacyPatterns(g.AudioOutputDir, script.ContentSlug, segment.Order)...); existing != "" {
+		if existing := latestExistingFile(audioPath); existing != "" {
 			audioPaths = append(audioPaths, existing)
 			continue
 		}
@@ -109,7 +109,7 @@ func (g *VideoGenerator) generateScenes(ctx context.Context, script models.Scrip
 			g.ImageOutputDir,
 			fmt.Sprintf("%s-%s-scene-%02d.png", script.ContentSlug, artifactKey, segment.Order),
 		)
-		if existing := latestExistingFile(imagePath, imageLegacyPatterns(g.ImageOutputDir, script.ContentSlug, segment.Order)...); existing != "" {
+		if existing := latestExistingFile(imagePath); existing != "" {
 			imagePath = existing
 		} else if g.ImageGenerator != nil {
 			if err := g.ImageGenerator.Generate(ctx, prompt, imagePath); err != nil {
