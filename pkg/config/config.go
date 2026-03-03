@@ -38,9 +38,9 @@ const (
 	defaultImageBaseURL        = "https://api.openai.com/v1"
 	defaultImageModel          = "gpt-image-1"
 	defaultImageSize           = "1024x1536"
-	defaultImageTimeoutSec     = 45
-	defaultImageMaxRetries     = 2
-	defaultImageRetryBackoffMs = 1000
+	defaultImageTimeoutSec     = 120
+	defaultImageMaxRetries     = 3
+	defaultImageRetryBackoffMs = 1500
 )
 
 type Config struct {

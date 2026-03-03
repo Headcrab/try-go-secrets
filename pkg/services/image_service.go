@@ -60,7 +60,7 @@ func NewImageService(opts ImageServiceOptions) *ImageService {
 	size := normalizeImageSize(opts.Size)
 	timeout := opts.Timeout
 	if timeout <= 0 {
-		timeout = 45 * time.Second
+		timeout = 120 * time.Second
 	}
 	maxRetries := opts.MaxRetries
 	if maxRetries < 0 {
@@ -103,6 +103,20 @@ func normalizeImageSize(raw string) string {
 	}
 }
 
+func annotateImageError(err error) error {
+	if err == nil {
+		return nil
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "context deadline exceeded") {
+		return fmt.Errorf(
+			"%w (hint: raise IMAGE_REQUEST_TIMEOUT_SEC to 180+, set IMAGE_SIZE=auto or 1024x1024, and retry)",
+			err,
+		)
+	}
+	return err
+}
+
 func (s *ImageService) Generate(ctx context.Context, prompt, outputPath string) error {
 	prompt = strings.TrimSpace(prompt)
 	if prompt == "" {
@@ -131,7 +145,7 @@ func (s *ImageService) Generate(ctx context.Context, prompt, outputPath string) 
 	body, statusCode, err := s.sendWithRetry(ctx, payload)
 	if err != nil {
 		if s.strictMode {
-			return err
+			return annotateImageError(err)
 		}
 		return writeFallbackSceneImage(outputPath, prompt)
 	}

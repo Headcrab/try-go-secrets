@@ -2,8 +2,10 @@ package services
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -64,5 +66,12 @@ func TestNormalizeImageSize(t *testing.T) {
 		if got != tc.want {
 			t.Fatalf("normalizeImageSize(%q)=%q, want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+func TestAnnotateImageErrorTimeout(t *testing.T) {
+	err := annotateImageError(errors.New("send image request: context deadline exceeded"))
+	if !strings.Contains(err.Error(), "IMAGE_REQUEST_TIMEOUT_SEC") {
+		t.Fatalf("expected timeout hint in error, got %q", err.Error())
 	}
 }
