@@ -1,0 +1,79 @@
+services:
+  puppeteer:
+    build:
+      context: .
+      dockerfile: Dockerfile.puppeteer
+      target: dev
+    env_file:
+      - .env
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      NODE_ENV: ${APP_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      PUPPETEER_PORT: ${PUPPETEER_PORT:-3000}
+      PUPPETEER_TIMEOUT_SEC: ${PUPPETEER_TIMEOUT_SEC:-120}
+      OUTPUT_DIR: /workspace/output
+      STATIC_DIR: /workspace/static
+    working_dir: /workspace/puppeteer
+    ports:
+      - "${PUPPETEER_PORT:-3000}:3000"
+    volumes:
+      - ./puppeteer:/workspace/puppeteer
+      - puppeteer_node_modules:/workspace/puppeteer/node_modules
+      - ./static:/workspace/static:ro
+      - ./output:/workspace/output
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:3000/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))
+      interval: ${PUPPETEER_HEALTH_INTERVAL:-10s}
+      timeout: ${PUPPETEER_HEALTH_TIMEOUT:-5s}
+      retries: ${PUPPETEER_HEALTH_RETRIES:-10}
+      start_period: ${PUPPETEER_HEALTH_START_PERIOD:-20s}
+    restart: unless-stopped
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: dev
+    env_file:
+      - .env
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      STRICT_ENV: ${STRICT_ENV:-false}
+      STRICT_REQUIRE_RENDER: ${STRICT_REQUIRE_RENDER:-false}
+      RAW_DIR: /workspace/raw
+      OUTPUT_DIR: /workspace/output
+      STATE_DIR: /workspace/state
+      CONTENT_NUM: ${CONTENT_NUM:-}
+      MAX_VIDEO_DURATION_SEC: ${MAX_VIDEO_DURATION_SEC:-60}
+      TTS_DAILY_LIMIT: ${TTS_DAILY_LIMIT:-2000}
+      ZAI_API_KEY: ${ZAI_API_KEY:-}
+      ZAI_API_BASE_URL: ${ZAI_API_BASE_URL:-https://api.z.ai/api/paas/v4}
+      ZAI_MODEL: ${ZAI_MODEL:-glm-4.7}
+      YANDEX_API_KEY: ${YANDEX_API_KEY:-}
+      YANDEX_FOLDER_ID: ${YANDEX_FOLDER_ID:-}
+      YANDEX_TTS_VOICE: ${YANDEX_TTS_VOICE:-jane}
+      YANDEX_TTS_EMOTION: ${YANDEX_TTS_EMOTION:-good}
+      YANDEX_TTS_SPEED: ${YANDEX_TTS_SPEED:-1.0}
+      YANDEX_TTS_FORMAT: ${YANDEX_TTS_FORMAT:-mp3}
+      PUPPETEER_SERVICE_URL: ${PUPPETEER_SERVICE_URL:-http://puppeteer:3000/render}
+      PUPPETEER_BASE_URL: ${PUPPETEER_BASE_URL:-}
+      PUPPETEER_TIMEOUT_SEC: ${PUPPETEER_TIMEOUT_SEC:-120}
+      FFMPEG_BIN: ${FFMPEG_BIN:-ffmpeg}
+    working_dir: /workspace
+    volumes:
+      - ./raw:/workspace/raw:ro
+      - ./output:/workspace/output
+      - ./state:/workspace/state
+    depends_on:
+      puppeteer:
+        condition: service_healthy
+    command: ["go", "run", "./cmd"]
+
+volumes:
+  puppeteer_node_modules:

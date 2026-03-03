@@ -1,0 +1,57 @@
+# syntax=docker/dockerfile:1.7
+
+FROM node:20-bookworm AS base
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        chromium \
+        dumb-init \
+        ffmpeg \
+        fonts-firacode \
+        fonts-liberation \
+        fonts-noto-color-emoji \
+        fontconfig \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV NODE_ENV=development \
+    PUPPETEER_SKIP_DOWNLOAD=true \
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium \
+    CHROME_BIN=/usr/bin/chromium \
+    PUPPETEER_PORT=3000 \
+    PUPPETEER_TIMEOUT_SEC=120 \
+    LOG_LEVEL=info
+
+FROM base AS deps
+WORKDIR /workspace/puppeteer
+COPY puppeteer/package*.json ./
+RUN if [ -f package-lock.json ]; then \
+        npm ci; \
+    elif [ -f package.json ]; then \
+        npm install; \
+    fi
+
+FROM base AS dev
+WORKDIR /workspace
+COPY --from=deps /workspace/puppeteer/node_modules /workspace/puppeteer/node_modules
+COPY puppeteer /workspace/puppeteer
+COPY static /workspace/static
+
+WORKDIR /workspace/puppeteer
+
+EXPOSE 3000
+
+HEALTHCHECK --interval=10s --timeout=5s --start-period=20s --retries=10 CMD node -e "const port=process.env.PUPPETEER_PORT||3000; fetch('http://127.0.0.1:'+port+'/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1));"
+
+ENTRYPOINT ["dumb-init", "--"]
+CMD ["node", "server.js"]
+
+FROM base AS runtime
+WORKDIR /workspace
+COPY --from=deps /workspace/puppeteer/node_modules /workspace/puppeteer/node_modules
+COPY puppeteer /workspace/puppeteer
+COPY static /workspace/static
+
+ENTRYPOINT ["dumb-init", "--"]
+WORKDIR /workspace/puppeteer
+CMD ["node", "server.js"]

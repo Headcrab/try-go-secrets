@@ -1,0 +1,222 @@
+version: "3"
+
+dotenv:
+  - .env
+
+tasks:
+  default:
+    desc: Show available tasks
+    cmds:
+      - task --list
+    silent: true
+
+  setup:
+    desc: Prepare local runtime directories, state files, and .env
+    cmds:
+      - bash scripts/setup.sh
+
+  preflight:
+    desc: Validate runtime env and optional strict requirements (STRICT=true REQUIRE_RENDER=true)
+    deps: [setup]
+    vars:
+      STRICT_MODE: '{{default (default "false" .STRICT_ENV) .STRICT}}'
+      REQUIRE_RENDER_MODE: '{{default (default "false" .STRICT_REQUIRE_RENDER) .REQUIRE_RENDER}}'
+    cmds:
+      - bash scripts/preflight.sh '{{.STRICT_MODE}}' '{{.REQUIRE_RENDER_MODE}}'
+
+  preflight:strict:
+    desc: Preflight with strict secret checks enabled
+    cmds:
+      - task: preflight
+        vars:
+          STRICT: "true"
+
+  preflight:strict:render:
+    desc: Strict preflight with required render endpoint
+    cmds:
+      - task: preflight
+        vars:
+          STRICT: "true"
+          REQUIRE_RENDER: "true"
+
+  deps:
+    desc: Install/update Go and Node dependencies
+    deps: [setup]
+    cmds:
+      - go mod tidy
+      - npm --prefix puppeteer ci
+
+  fmt:
+    desc: Format Go code
+    cmds:
+      - gofmt -w ./cmd ./pkg
+
+  test:
+    desc: Run all Go tests
+    deps: [setup]
+    cmds:
+      - task: preflight
+      - go test ./...
+
+  build:
+    desc: Build all Go packages
+    deps: [setup]
+    cmds:
+      - task: preflight
+      - go build ./...
+
+  ci:
+    desc: Local CI sequence (fmt + test + build)
+    cmds:
+      - task: fmt
+      - task: test
+      - task: build
+
+  puppeteer:dev:
+    desc: Start Puppeteer render service locally (foreground)
+    deps: [setup]
+    cmds:
+      - task: preflight
+      - npm --prefix puppeteer ci
+      - node puppeteer/server.js
+
+  run:local:
+    desc: Run pipeline locally (optional NUM=43)
+    deps: [setup]
+    env:
+      PUPPETEER_SERVICE_URL: '{{default "http://127.0.0.1:3000/render" .PUPPETEER_SERVICE_URL}}'
+    cmds:
+      - task: preflight
+        vars:
+          REQUIRE_RENDER: "true"
+      - go run ./cmd{{if .NUM}} {{.NUM}}{{end}}
+
+  run:local:no-render:
+    desc: Run local pipeline with placeholder video renderer (no Puppeteer)
+    deps: [setup]
+    env:
+      PUPPETEER_SERVICE_URL: ""
+    cmds:
+      - task: preflight
+      - go run ./cmd{{if .NUM}} {{.NUM}}{{end}}
+
+  run:prod:local:
+    desc: Run local pipeline in production mode with strict env checks (optional NUM=43)
+    deps: [setup]
+    env:
+      APP_ENV: production
+      STRICT_ENV: "true"
+      PUPPETEER_SERVICE_URL: '{{default "http://127.0.0.1:3000/render" .PUPPETEER_SERVICE_URL}}'
+    cmds:
+      - task: preflight
+        vars:
+          STRICT: "true"
+          REQUIRE_RENDER: "true"
+      - go run ./cmd{{if .NUM}} {{.NUM}}{{end}}
+
+  docker:build:
+    desc: Build Docker images
+    deps: [setup]
+    cmds:
+      - docker compose build
+
+  docker:up:
+    desc: Start Puppeteer service in Docker
+    deps: [setup]
+    cmds:
+      - docker compose up -d puppeteer
+
+  docker:down:
+    desc: Stop and remove compose services
+    cmds:
+      - docker compose down
+
+  run:docker:
+    desc: Run pipeline in Docker (optional NUM=43)
+    deps: [setup, docker:up]
+    cmds:
+      - task: preflight
+        vars:
+          REQUIRE_RENDER: "true"
+      - docker compose run --rm app go run ./cmd{{if .NUM}} {{.NUM}}{{end}}
+
+  run:docker:no-render:
+    desc: Run pipeline in Docker without Puppeteer (placeholder video)
+    deps: [setup]
+    cmds:
+      - task: preflight
+      - docker compose run --rm -e PUPPETEER_SERVICE_URL= app go run ./cmd{{if .NUM}} {{.NUM}}{{end}}
+
+  run:prod:docker:
+    desc: Run pipeline in Docker production mode with strict env checks (optional NUM=43)
+    deps: [setup, docker:up]
+    cmds:
+      - task: preflight
+        vars:
+          STRICT: "true"
+          REQUIRE_RENDER: "true"
+      - docker compose run --rm -e APP_ENV=production -e STRICT_ENV=true app go run ./cmd{{if .NUM}} {{.NUM}}{{end}}
+
+  run:
+    desc: Alias for run:docker (optional NUM=43)
+    cmds:
+      - task: run:docker
+        vars:
+          NUM: "{{.NUM}}"
+
+  run:prod:
+    desc: Alias for run:prod:docker (optional NUM=43)
+    cmds:
+      - task: run:prod:docker
+        vars:
+          NUM: "{{.NUM}}"
+
+  smoke:local:
+    desc: Local smoke check (preflight + CLI help)
+    deps: [setup]
+    cmds:
+      - task: preflight
+      - go run ./cmd --help
+
+  smoke:local:render:
+    desc: Local render smoke check (requires running Puppeteer service)
+    deps: [setup]
+    env:
+      PUPPETEER_SERVICE_URL: '{{default "http://127.0.0.1:3000/render" .PUPPETEER_SERVICE_URL}}'
+    cmds:
+      - task: preflight
+        vars:
+          REQUIRE_RENDER: "true"
+      - bash scripts/healthcheck.sh '{{default "http://127.0.0.1:3000/health" .PUPPETEER_HEALTH_URL}}' 15
+
+  smoke:docker:
+    desc: Docker smoke check (preflight + Puppeteer health + CLI help)
+    deps: [setup, docker:up]
+    cmds:
+      - task: preflight
+        vars:
+          REQUIRE_RENDER: "true"
+      - bash scripts/healthcheck.sh 'http://127.0.0.1:{{default "3000" .PUPPETEER_PORT}}/health' 20
+      - docker compose run --rm app go run ./cmd --help
+
+  smoke:prod:docker:
+    desc: Production-mode Docker smoke check with strict env checks
+    deps: [setup, docker:up]
+    cmds:
+      - task: preflight
+        vars:
+          STRICT: "true"
+          REQUIRE_RENDER: "true"
+      - bash scripts/healthcheck.sh 'http://127.0.0.1:{{default "3000" .PUPPETEER_PORT}}/health' 20
+      - docker compose run --rm -e APP_ENV=production -e STRICT_ENV=true app go run ./cmd --help
+
+  smoke:
+    desc: Alias for smoke:docker
+    cmds:
+      - task: smoke:docker
+
+  state:reset:
+    desc: Reset processing state counters
+    deps: [setup]
+    cmds:
+      - bash scripts/state_reset.sh

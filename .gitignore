@@ -1,0 +1,31 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Runtime artifacts
+output/
+*.log
+
+# Keep canonical state json files tracked; ignore temp artifacts only
+state/*.bak
+state/*.tmp
+state/*.lock
+
+# Go
+bin/
+dist/
+coverage.out
+*.test
+
+# Node
+node_modules/
+puppeteer/node_modules/
+npm-debug.log*
+yarn-error.log*
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
